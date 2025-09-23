@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    println!("Press enter to start the game:");
 }
