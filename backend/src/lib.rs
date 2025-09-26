@@ -55,18 +55,33 @@ pub mod game {
 
         pub fn tick(&mut self) {
             match self.mode {
+
                 Mode::Joining => {
-                    self.mode = Mode::Betting;
-                    self.current_flip = 0;
-                }
+                    if self.flips.len() == 0 {
+                        self.mode = Mode::Done;
+                    } else {
+                        self.mode = Mode::Betting;
+                        self.current_flip = 0;
+                    }
+                } // Joining
+
                 Mode::Betting => {
+                    self.mode = Mode::BetResult;
+                } // Betting
 
-                }
                 Mode::BetResult => {
+                    if self.current_flip + 1 >= self.flips.len() {
+                        self.mode = Mode::Done
+                    } else {
+                        self.mode = Mode::Betting;
+                        self.current_flip += 1;
+                    }
+                } // BetResult
 
-                }
+                // No op for safety
                 Mode::Done => {}
-            }
+
+            } // match self.node
         }
     }
 
@@ -97,10 +112,19 @@ pub mod game {
         Done,
     }
 
+    /// self.0 to self.1 odds
     struct Payout(u64, u64);
 
     struct Flip {
         payout: Payout,
+
+        /// percentage of success (out of 100)
         probability: u64,
+    }
+
+    impl Flip {
+        fn evaluate(&self) -> Payout {
+            todo!()
+        }
     }
 }
