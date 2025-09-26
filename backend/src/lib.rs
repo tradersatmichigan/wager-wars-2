@@ -1,51 +1,51 @@
-use std::collections::BTreeMap;
+pub mod api {
 
-struct Flip {
-    probability: f32,
-    payout: f32,
+    pub async fn login() {
+
+    }
+
 }
 
-struct Bet {
-    amount: u32,
-    flips: Vec<u32>
-}
+pub mod game {
+    use std::collections::HashMap;
 
-struct Player {
-    stack: u32,
-    bet: Option<Bet>
-}
+    use anyhow::Result;
 
-enum RoundType {
-    Joining,
-    Betting,
-    Results,
-    Leaderboard,
-}
+    pub struct Game {
+        players: HashMap<String, Player>,
+        mode: Mode,
+    }
 
-pub struct Game {
-    players: BTreeMap<String, Player>,
-    current_rount: RoundType,
-    flips: Vec<Vec<Flip>>,
-    current_flip: usize,
-}
+    impl Game {
+        pub fn add_player(&mut self, name: String) -> Result<()> {
+            if self.players.contains_key(&name) {
+                anyhow::bail!("This username is already taken");
+            }
 
-impl Game {
-    const INIT_STACK: u32 = 1000;
+            if self.mode != Mode::Joining {
+                anyhow::bail!("This game is already in progress");
+            }
 
-    pub fn new() -> Self {
-        Self {
-            players: BTreeMap::new(),
-            current_rount: RoundType::Joining,
-            flips: get_flips(),
-            current_flip: 0
+            self.players.insert(name, Player::default());
+            Ok(())
         }
     }
 
-    pub fn add_player(&mut self) -> anyhow::Result<()> {
-        todo!()
+    struct Player {
+        stack: u64
     }
-}
 
-fn get_flips() -> Vec<Vec<Flip>> {
-    todo!()
+    impl Default for Player {
+        fn default() -> Self {
+            todo!()
+        }
+    }
+
+    #[derive(PartialEq, Eq)]
+    enum Mode {
+        Joining,
+        Betting,
+        BetResult,
+        Done,
+    }
 }
