@@ -1,11 +1,12 @@
 pub mod api {
-    use std::sync::Arc;
+    use std::{convert::Infallible, sync::Arc};
 
     use anyhow::Result;
-    use axum::{extract::State, Json};
+    use axum::{extract::State, response::{sse::Event, Sse}, Json};
     use axum_extra::extract::{cookie::Cookie, CookieJar};
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use tokio::sync::Mutex;
+    use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
     use crate::game::{self, Bet};
 
@@ -41,17 +42,51 @@ pub mod api {
 
         Ok(())
     }
+
+    #[derive(Serialize)]
+    pub struct Update {
+        mode: game::Mode,
+        stack: Option<u64>,
+    }
+
+    pub async fn get_player_state(State(state): State<AppState>, jar: CookieJar) -> Update {
+        let player = jar.get(&state.key).map(Cookie::value);
+
+        let game = state.game.lock().await;
+
+        Update {
+            mode: game.mode(),
+            stack: player.and_then(|player| game.get_stack(player.to_string()).ok())
+        }
+    }
+
+    pub async fn get_events(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+        let rx = state.game.lock().await.subscribe();
+
+        let stream = BroadcastStream::new(rx).map(|_| {
+            Ok(Event::default())
+        }); 
+
+        Sse::new(stream).keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(std::time::Duration::from_secs(30))
+                .text("ping")
+        )
+    }
 }
 
 pub mod game {
     use std::collections::HashMap;
 
     use anyhow::Result;
+    use serde::Serialize;
+    use tokio::sync::broadcast;
 
     pub struct Game {
         players: HashMap<String, Player>,
         mode_iter: ModeIterator,
         mode: Mode,
+        tx: broadcast::Sender<()>,
     }
 
     impl Game { 
@@ -61,7 +96,16 @@ pub mod game {
                 players: HashMap::new(),
                 mode_iter: ModeIterator::new(flips),
                 mode: Mode::Joining,
+                tx: broadcast::Sender::new(1000),
             }
+        }
+
+        pub fn subscribe(&self) -> broadcast::Receiver<()> {
+            self.tx.subscribe()
+        }
+
+        pub fn mode(&self) -> Mode {
+            self.mode
         }
 
         pub fn add_player(&mut self, name: String) -> Result<()> {
@@ -177,8 +221,8 @@ pub mod game {
         }
     }
 
-    #[derive(Clone)]
-    enum Mode {
+    #[derive(Clone, Serialize)]
+    pub enum Mode {
         Joining,
         Betting(Vec<Flip>),
         BetResults(Vec<EvaluatedFlip>),
@@ -226,10 +270,10 @@ pub mod game {
     }
 
     /// self.0 to self.1 odds
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Serialize)]
     struct Payout(u64, u64);
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Serialize)]
     pub struct Flip {
         payout: Payout,
         /// percentage of success (out of 100)
@@ -246,7 +290,7 @@ pub mod game {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Serialize)]
     struct EvaluatedFlip {
         payout: Payout,
         is_heads: bool,
