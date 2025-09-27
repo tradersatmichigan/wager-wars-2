@@ -1,7 +1,37 @@
-pub mod api { }
+pub mod api {
+    use std::sync::Arc;
+
+    use anyhow::Result;
+    use axum::{extract::State, Json};
+    use serde::Deserialize;
+    use tokio::sync::Mutex;
+
+    use crate::game;
+
+    #[derive(Clone)]
+    pub struct AppState {
+        game: Arc<Mutex<game::Game>>
+    }
+
+    #[derive(Deserialize)]
+    pub struct JoinRequest {
+        name: String
+    }
+
+    pub async fn join_game(State(state): State<AppState>, Json(request): Json<JoinRequest>) -> Result<()> {
+        state.game.lock().await.add_player(request.name)
+    }
+
+    #[derive(Deserialize)]
+    pub struct BetRequest {
+        
+    }
+}
 
 pub mod game {
     use std::collections::HashMap;
+
+    use anyhow::Result;
 
     pub struct Game {
         players: HashMap<String, Player>,
@@ -16,6 +46,49 @@ pub mod game {
                 players: HashMap::new(),
                 mode_iter: ModeIterator::new(flips),
                 mode: Mode::Joining,
+            }
+        }
+
+        pub fn add_player(&mut self, name: String) -> Result<()> {
+            if !matches!(self.mode, Mode::Joining) {
+                anyhow::bail!("This game is already in progress");
+            }
+
+            if self.players.contains_key(&name) {
+                anyhow::bail!("This name is already taken");
+            }
+
+            self.players.insert(name, Player::default());
+            Ok(())
+        }
+
+        pub fn get_stack(&self, player: String) -> Result<u64> {
+            let player = self.players.get(&player).ok_or(anyhow::anyhow!("Not signed in"))?;
+            Ok(player.stack)
+        }
+
+        pub fn bet(&mut self, player: String, bet: Bet) -> Result<()> {
+            let flips = match self.mode.clone() {
+                Mode::Betting(flips) => flips,
+                _ => anyhow::bail!("You cannot bet right now")
+            };
+
+            if bet.flips.iter().any(|idx| *idx > flips.len()) {
+                anyhow::bail!("Invalid bet slip")
+            }
+
+            let player = self.players.get_mut(&player);
+
+            match player {
+                Some(player) => {
+                    if player.stack < bet.amount {
+                        anyhow::bail!("You cannot bet more than your stack");
+                    }
+
+                    player.current_bet = Some(bet);
+                    Ok(())
+                }
+                None => anyhow::bail!("Invalid player")
             }
         }
 
@@ -35,8 +108,9 @@ pub mod game {
                             for (_, player) in self.players.iter_mut() {
                                 if let Some(bet) = player.current_bet.clone() {
                                     if bet.flips.iter().all(|idx| { results[*idx].is_heads }) {
-                                        let (num, denom) = results.iter().fold((1, 1), |(al, ar), elt| {
-                                            (al * elt.payout.0, ar * elt.payout.1)
+                                        let (num, denom) = bet.flips.iter().fold((1, 1), |(al, ar), bet_idx| {
+                                            let Payout(l, r) = results[*bet_idx].payout;
+                                            (al * l, ar * r)
                                         });
                                         player.stack += bet.amount * num / denom;
                                     } // If hit
@@ -64,8 +138,17 @@ pub mod game {
         current_bet: Option<Bet>,
     }
 
+    impl Default for Player {
+        fn default() -> Self {
+            Self { 
+                stack: 10000, 
+                current_bet: None
+            }
+        }
+    }
+
     #[derive(Clone)]
-    struct Bet {
+    pub struct Bet {
         amount: u64,
         flips: Vec<usize>,
     }
