@@ -3,14 +3,16 @@ pub mod api {
 
     use anyhow::Result;
     use axum::{extract::State, Json};
+    use axum_extra::extract::{cookie::Cookie, CookieJar};
     use serde::Deserialize;
     use tokio::sync::Mutex;
 
-    use crate::game;
+    use crate::game::{self, Bet};
 
     #[derive(Clone)]
     pub struct AppState {
-        game: Arc<Mutex<game::Game>>
+        game: Arc<Mutex<game::Game>>,
+        key: String,
     }
 
     #[derive(Deserialize)]
@@ -18,13 +20,26 @@ pub mod api {
         name: String
     }
 
-    pub async fn join_game(State(state): State<AppState>, Json(request): Json<JoinRequest>) -> Result<()> {
-        state.game.lock().await.add_player(request.name)
+    pub async fn join_game(State(state): State<AppState>, Json(request): Json<JoinRequest>, jar: CookieJar) -> Result<CookieJar> {
+        state.game.lock().await.add_player(request.name.clone())?;
+        Ok(jar.add(Cookie::new(state.key, request.name)))
     }
 
     #[derive(Deserialize)]
     pub struct BetRequest {
-        
+        amount: u64,        
+        indexes: Vec<usize>,
+    }
+
+    pub async fn place_bet(State(state): State<AppState>, Json(request): Json<BetRequest>, jar: CookieJar) -> Result<()> {
+        let player = match jar.get(&state.key) {
+            Some(name) => name.value(),
+            None => anyhow::bail!("You arent signed in")
+        };
+
+        state.game.lock().await.bet(player.to_string(), Bet::new(request.amount, request.indexes))?;
+
+        Ok(())
     }
 }
 
@@ -151,6 +166,15 @@ pub mod game {
     pub struct Bet {
         amount: u64,
         flips: Vec<usize>,
+    }
+
+    impl Bet {
+        pub fn new(amount: u64, flips: Vec<usize>) -> Self {
+            Self {
+                amount,
+                flips
+            }
+        }
     }
 
     #[derive(Clone)]
