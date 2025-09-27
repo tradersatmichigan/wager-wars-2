@@ -2,18 +2,27 @@ pub mod api {
     use std::{convert::Infallible, sync::Arc};
 
     use anyhow::Result;
-    use axum::{extract::State, response::{sse::Event, Sse}, Json};
+    use axum::{extract::State, response::{sse::Event, IntoResponse, Sse}, Json};
     use axum_extra::extract::{cookie::Cookie, CookieJar};
     use serde::{Deserialize, Serialize};
     use tokio::sync::Mutex;
     use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
-    use crate::game::{self, Bet};
+    use crate::game::{self, Bet, Game};
 
     #[derive(Clone)]
     pub struct AppState {
-        game: Arc<Mutex<game::Game>>,
+        game: Arc<Mutex<Game>>,
         key: String,
+    }
+
+    impl AppState {
+        pub fn new(game: Game) -> Self {
+            Self {
+                game: Arc::new(Mutex::new(game)),
+                key: rand::random::<u32>().to_string()
+            }
+        }
     }
 
     #[derive(Deserialize)]
@@ -21,7 +30,12 @@ pub mod api {
         name: String
     }
 
-    pub async fn join_game(State(state): State<AppState>, Json(request): Json<JoinRequest>, jar: CookieJar) -> Result<CookieJar> {
+    pub async fn join_game(
+        State(state): State<AppState>, 
+        Json(request): Json<JoinRequest>, 
+        jar: CookieJar
+    ) -> impl IntoResponse
+    {
         state.game.lock().await.add_player(request.name.clone())?;
         Ok(jar.add(Cookie::new(state.key, request.name)))
     }
@@ -32,7 +46,12 @@ pub mod api {
         indexes: Vec<usize>,
     }
 
-    pub async fn place_bet(State(state): State<AppState>, Json(request): Json<BetRequest>, jar: CookieJar) -> Result<()> {
+    pub async fn place_bet(
+        State(state): State<AppState>, 
+        Json(request): Json<BetRequest>, 
+        jar: CookieJar
+        ) -> impl IntoResponse 
+    {
         let player = match jar.get(&state.key) {
             Some(name) => name.value(),
             None => anyhow::bail!("You arent signed in")
@@ -49,15 +68,20 @@ pub mod api {
         stack: Option<u64>,
     }
 
-    pub async fn get_player_state(State(state): State<AppState>, jar: CookieJar) -> Update {
+    pub async fn get_player_state(
+        State(state): State<AppState>, 
+        jar: CookieJar
+        ) -> impl IntoResponse
+    {
         let player = jar.get(&state.key).map(Cookie::value);
 
         let game = state.game.lock().await;
 
-        Update {
+        Json(Update {
             mode: game.mode(),
-            stack: player.and_then(|player| game.get_stack(player.to_string()).ok())
-        }
+            stack: player
+                .and_then(|player| game.get_stack(player.to_string()).ok())
+        })
     }
 
     pub async fn get_events(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -105,7 +129,7 @@ pub mod game {
         }
 
         pub fn mode(&self) -> Mode {
-            self.mode
+            self.mode.clone()
         }
 
         pub fn add_player(&mut self, name: String) -> Result<()> {
@@ -291,7 +315,7 @@ pub mod game {
     }
 
     #[derive(Clone, Copy, Serialize)]
-    struct EvaluatedFlip {
+    pub struct EvaluatedFlip {
         payout: Payout,
         is_heads: bool,
     }
