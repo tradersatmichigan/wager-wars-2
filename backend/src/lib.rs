@@ -22,8 +22,36 @@ pub mod game {
         pub fn tick(&mut self) {
             match self.mode_iter.next() {
                 Some(next) => {
+                    self.mode = next;
+
+                    match self.mode.clone() {
+                        Mode::Betting(_) => {
+                            for (_, player) in self.players.iter_mut() {
+                                player.current_bet = None;
+                            }
+                        } // If betting
+
+                        Mode::BetResults(results) => {
+                            for (_, player) in self.players.iter_mut() {
+                                if let Some(bet) = player.current_bet.clone() {
+                                    if bet.flips.iter().all(|idx| { results[*idx].is_heads }) {
+                                        let (num, denom) = results.iter().fold((1, 1), |(al, ar), elt| {
+                                            (al * elt.payout.0, ar * elt.payout.1)
+                                        });
+                                        player.stack += bet.amount * num / denom;
+                                    } // If hit
+                                    else {
+                                        player.stack -= bet.amount;
+                                    } // If missed parlay
+                                } // if placed a bet
+                            } // for player
+                        } // if results
+
+                        _ => {} // noop for safety
+                    }
 
                 }
+
                 None => {
                     self.mode = Mode::Results;
                 }
@@ -36,11 +64,13 @@ pub mod game {
         current_bet: Option<Bet>,
     }
 
+    #[derive(Clone)]
     struct Bet {
         amount: u64,
         flips: Vec<usize>,
     }
 
+    #[derive(Clone)]
     enum Mode {
         Joining,
         Betting(Vec<Flip>),
@@ -109,6 +139,7 @@ pub mod game {
         }
     }
 
+    #[derive(Clone, Copy)]
     struct EvaluatedFlip {
         payout: Payout,
         is_heads: bool,
